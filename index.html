@@ -137,6 +137,16 @@ const PRESETS = { mid: [22, 1.03, 0], G: [52.7, 0.22, 34.5], P: [13.4, 2.03, 11.
 const y = [22, 1.03, 0];
 let t = 0, running = true;
 
+// Time history of the A value a cell is receiving. One history per cell, so a future
+// multi-cell version just creates more of these and calls drawATrace once per cell.
+const HIST_MAX = 6000, TRACE_WINDOW = 20000;   // samples kept; time units shown
+function makeHistory() { return { t: new Float64Array(HIST_MAX), v: new Float32Array(HIST_MAX), n: 0, head: 0 }; }
+function pushHistory(hst, time, value) {
+  hst.t[hst.head] = time; hst.v[hst.head] = value;
+  hst.head = (hst.head + 1) % HIST_MAX; hst.n = Math.min(hst.n + 1, HIST_MAX);
+}
+const aHist = makeHistory();
+
 // Cell color is driven by G, blended between the two stable G levels found with the
 // Table S1 parameters (low-G/PU.1-high ~13.4, high-G ~52.7). The range is fixed: if you move
 // parameters so the attractors shift, G is simply clamped to this range.
@@ -150,6 +160,7 @@ function cellColor(G) {
 function resetState() {
   const p = PRESETS[document.getElementById('preset').value];
   y[0] = p[0]; y[1] = p[1]; y[2] = p[2]; t = 0;
+  aHist.n = 0; aHist.head = 0; pushHistory(aHist, t, params.A);
 }
 document.getElementById('reset').onclick = resetState;
 document.getElementById('preset').onchange = resetState;
@@ -180,6 +191,7 @@ function drawCell() {
   c.strokeStyle = `rgb(${Math.round(R * 0.7)},${Math.round(G * 0.7)},${Math.round(B * 0.7)})`; c.stroke();
   drawInset(c);
   drawLegend(c, r.width, r.height);
+  drawATrace(c, r.width - 14 - 300, 14, 300, 150, aHist, 'Cell 1 · A over time');
 }
 
 
@@ -264,8 +276,41 @@ function drawLegend(c, W, H) {
   });
 }
 
+// ---------- live trace of A for one cell ----------
+function drawATrace(c, x, y, w, h, hst, title) {
+  const pl = 40, pr = 22, pt = 30, pb = 22;
+  c.fillStyle = 'rgba(255,255,255,0.82)'; c.beginPath(); c.roundRect(x, y, w, h, 8); c.fill();
+  c.fillStyle = '#1c1917'; c.font = '600 12px system-ui, sans-serif'; c.textAlign = 'left'; c.textBaseline = 'top';
+  c.fillText(title, x + 10, y + 8);
+  c.textAlign = 'right'; c.fillText('A = ' + params.A.toFixed(3), x + w - 10, y + 8);
+  const gx = x + pl, gy = y + pt, gw = w - pl - pr, gh = h - pt - pb;
+  const x1 = Math.max(t, TRACE_WINDOW), x0 = x1 - TRACE_WINDOW;
+  const sx = tt => gx + (tt - x0) / (x1 - x0) * gw, sy = a => gy + gh - a / A_MAX * gh;
+  c.strokeStyle = '#d5dde3'; c.lineWidth = 1; c.fillStyle = '#5c666e'; c.font = '10.5px system-ui, sans-serif';
+  c.textAlign = 'right'; c.textBaseline = 'middle';
+  for (const a of [0, 1, 2]) { c.beginPath(); c.moveTo(gx, sy(a)); c.lineTo(gx + gw, sy(a)); c.stroke(); c.fillText(a.toFixed(1), gx - 4, sy(a)); }
+  c.strokeRect(gx, gy, gw, gh);
+  c.textAlign = 'center'; c.textBaseline = 'top';
+  for (const f of [0, 0.5, 1]) c.fillText(Math.round(x0 + f * (x1 - x0)).toLocaleString(), gx + f * gw, gy + gh + 4);
+  // step trace (A holds its value until changed), extended to "now" with the current slider value
+  c.save(); c.beginPath(); c.rect(gx, gy - 2, gw, gh + 4); c.clip();
+  c.strokeStyle = '#1c1917'; c.lineWidth = 2; c.lineJoin = 'round'; c.beginPath();
+  let started = false, prev = null;
+  for (let k = 0; k < hst.n; k++) {
+    const i = (hst.head - hst.n + k + HIST_MAX) % HIST_MAX;
+    if (hst.t[i] < x0) { prev = hst.v[i]; continue; }
+    if (!started) { if (prev === null) prev = hst.v[i]; c.moveTo(sx(x0), sy(prev)); started = true; }
+    c.lineTo(sx(hst.t[i]), sy(prev)); c.lineTo(sx(hst.t[i]), sy(hst.v[i])); prev = hst.v[i];
+  }
+  if (!started) { prev = params.A; c.moveTo(sx(x0), sy(prev)); }
+  c.lineTo(sx(t), sy(prev)); c.lineTo(sx(t), sy(params.A));
+  c.stroke(); c.restore();
+  c.fillStyle = '#fff'; c.strokeStyle = '#1c1917'; c.lineWidth = 2;
+  c.beginPath(); c.arc(Math.min(sx(t), gx + gw), sy(params.A), 4, 0, 7); c.fill(); c.stroke();
+}
+
 function frame() {
-  if (running) advance(parseInt(spfIn.value, 10));
+  if (running) { advance(parseInt(spfIn.value, 10)); pushHistory(aHist, t, params.A); }
   drawCell();
   document.getElementById('tOut').textContent = Math.round(t).toLocaleString();
   document.getElementById('gOut').textContent = y[0].toFixed(2);
