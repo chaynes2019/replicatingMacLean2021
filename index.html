@@ -26,6 +26,16 @@
   button:hover { background: #f3f1ee; }
   button.primary { background: var(--accent); color: #fff; border-color: var(--accent); min-width: 78px; }
   button.primary:hover { background: #3a3532; }
+  button#rec.on { background: #b3261e; color: #fff; border-color: #b3261e; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .field { display: flex; gap: 8px; align-items: center; margin: 5px 0; }
+  .field label { width: 40px; font-family: ui-serif, Georgia, serif; font-size: 14px; }
+  .field select, .field input[type=number] { flex: 1; min-width: 0; }
+  input[type=number] { font: inherit; padding: 3px 6px; border: 1px solid #c9c4be; border-radius: 6px; width: 100%; }
+  textarea { width: 100%; font: 13px ui-monospace, Menlo, monospace; padding: 6px; border: 1px solid #c9c4be; border-radius: 6px; resize: vertical; }
+  .err { color: #b3261e; font-size: 12px; min-height: 1em; margin: 2px 0; }
+  [hidden] { display: none !important; }
+  .recinfo { color: #b3261e; font-size: 13px; font-variant-numeric: tabular-nums; }
   .readout { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
   .readout b { color: var(--ink); font-weight: 600; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 6px; display: flex; flex-direction: column; min-height: 0; }
@@ -47,6 +57,20 @@
   select { font: inherit; padding: 4px 6px; border: 1px solid #c9c4be; border-radius: 6px; background: var(--panel); }
   .legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); margin-left: 8px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+  /* ---- presentation view: picture fills the window; a few controls in a small box, lower right ---- */
+  #ctlBox { display: none; }
+  body.presenting header, body.presenting aside { display: none; }
+  body.presenting main { display: block; position: fixed; inset: 0; }
+  body.presenting section.vis { position: absolute; inset: 0; padding: 0; gap: 0; }
+  body.presenting .stage { position: absolute; inset: 0; border-radius: 0; }
+  body.presenting .bar { position: absolute; z-index: 5; left: 50%; bottom: 12px; transform: translateX(-50%); max-width: calc(100vw - 600px);
+    background: rgba(255,255,255,.82); border-radius: 8px; padding: 6px 10px; }
+  body.presenting #ctlBox { display: block; position: absolute; z-index: 6; right: 12px; bottom: 12px; width: 250px; max-height: calc(100vh - 24px); overflow-y: auto;
+    background: rgba(255,255,255,.88); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 8px; box-shadow: 0 2px 10px rgba(0,0,0,.12); }
+  #ctlBox .ctlHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  #ctlBox .ctlHead button { padding: 2px 8px; font-size: 12px; }
+  #ctlBox .field label { width: 40px; }
+  #ctlBox textarea { font-size: 12px; }
 </style>
 </head>
 <body>
@@ -62,10 +86,24 @@
 
 <main>
 <aside id="controls">
+  <button id="viewBtnFull" title="Full-window picture with only the few key controls (shortcut: F)">⤢ Presentation view</button>
   <h3>Simulation</h3>
   <div class="row"><label>step</label><input id="dt" type="range" min="0.05" max="4" step="0.05" value="0.5"><output id="dtOut"></output></div>
   <div class="row"><label>speed</label><input id="spf" type="range" min="1" max="600" step="1" value="120"><output id="spfOut"></output></div>
   <div class="hint">step = RK4 step size h (time units). speed = RK4 steps per animation frame. Big h with large rates can go unstable — try it.</div>
+  <h3>Cells &amp; signaling</h3>
+  <div class="field" id="topoField"><label for="topo">cells</label><select id="topo"></select></div>
+  <div class="row" id="nRow"><label>N</label><input id="nCells" type="range" min="2" max="30" step="1" value="5"><output id="nOut"></output></div>
+  <div id="customBox" hidden>
+    <textarea id="edgeText" rows="3" spellcheck="false" placeholder="1>2, 2>3, 3-|1">1>2, 2>3, 3-|1</textarea>
+    <div class="field"><button id="applyEdges">Apply</button><span class="err" id="edgeErr"></span></div>
+    <div class="hint">Cells are numbered from 1. <b>a&gt;b</b> = consensus signal from a to b; <b>a-|b</b> = dissensus signal.</div>
+  </div>
+  <div id="sigBox" hidden>
+    <div id="sigHost"></div>
+    <div class="field"><label for="seed">seed</label><input id="seed" type="number" min="0" step="1" value="1"><button id="newSeed" title="Draw a new random seed and restart">New seed</button></div>
+    <div class="hint">Same seed + Reset state replays exactly the same random signals. In network mode A is each cell's resting value A₀; signals multiply it briefly.</div>
+  </div>
   <div id="paramHost"></div>
   <p class="hint">Drag any slider while the simulation runs; the next RK4 step uses the new value. Double-click a label to restore its Table S1 value.</p>
   <button id="resetParams" style="margin-top:6px">Restore all Table S1 values</button>
@@ -77,19 +115,27 @@
     <button id="reset">Reset state</button>
     <label>Start from
       <select id="preset">
-        <option value="mid">near the threshold (22, 1.03, 0)</option>
+        <option value="mid">paper's start (20, 1, 20)</option>
         <option value="G">GATA1-high (ME)</option>
         <option value="P">PU.1-high (GM)</option>
         <option value="zero">all zero</option>
       </select>
     </label>
-    <span class="readout">t = <b id="tOut">0</b> &nbsp; G = <b id="gOut"></b> &nbsp; P = <b id="pOut"></b> &nbsp; X = <b id="xOut"></b></span>
+    <button id="rec" title="Record the visualization panel to an MP4 file. Video fps = the Speed slider value (max 120) when you press Record; one video frame per simulation frame.">● Record</button>
+    <span class="recinfo" id="recInfo"></span>
+    <span class="readout">t = <b id="tOut">0</b> &nbsp; <span id="cellLbl"></span>G = <b id="gOut"></b> &nbsp; P = <b id="pOut"></b> &nbsp; X = <b id="xOut"></b><span id="highOut"></span></span>
   </div>
   <div class="stage"><canvas id="cell"></canvas></div>
+  <div id="ctlBox">
+    <div class="ctlHead"><span>Controls</span><button id="viewBtnBox" title="Show every parameter (shortcut: F)">⚙ All controls</button></div>
+    <div id="ctlBody"></div>
+  </div>
 </section>
 </main>
 
 <script src="model.js"></script>
+<script src="network.js"></script>
+<script src="mp4mux.js"></script>
 <script>
 'use strict';
 const { DEFAULTS, derivs, rk4Step } = Model;
@@ -107,25 +153,36 @@ const GROUPS = [
     ['g5', 'γ₅', 0, 1, 0.005], ['g6', 'γ₆', 0, 2, 0.005], ['g7', 'γ₇', 0, 0.5, 0.0025], ['g8', 'γ₈', 0, 0.1, 0.0005], ['g9', 'γ₉', 0, 20, 0.05]]],
 ];
 const decimals = step => Math.max(0, Math.ceil(-Math.log10(step)));
-const rows = {};
-const host = document.getElementById('paramHost');
-for (const [title, list] of GROUPS) {
-  const h = document.createElement('h3'); h.textContent = title; host.appendChild(h);
+const rows = {};                                    // key -> refresh function, for every slider
+const labelEls = {}, rowEls = {};
+// Builds a group of sliders that read/write fields of `target` live.
+function buildSliders(host, title, list, target, defaults) {
+  if (title) { const h = document.createElement('h3'); h.textContent = title; host.appendChild(h); }
   for (const [key, label, min, max, step] of list) {
     const row = document.createElement('div'); row.className = 'row';
     row.innerHTML = `<label title="double-click to restore">${label}</label><input type="range" min="${min}" max="${max}" step="${step}"><output></output>`;
     const inp = row.querySelector('input'), out = row.querySelector('output'), lab = row.querySelector('label');
     const refresh = () => {
-      inp.value = params[key];
-      out.textContent = (+params[key]).toFixed(decimals(step));
-      row.classList.toggle('changed', Math.abs(params[key] - DEFAULTS[key]) > 1e-9);
+      inp.value = target[key];
+      out.textContent = (+target[key]).toFixed(decimals(step));
+      row.classList.toggle('changed', Math.abs(target[key] - defaults[key]) > 1e-9);
     };
-    inp.addEventListener('input', () => { params[key] = parseFloat(inp.value); refresh(); });
-    lab.addEventListener('dblclick', () => { params[key] = DEFAULTS[key]; refresh(); });
-    rows[key] = refresh; refresh(); host.appendChild(row);
+    inp.addEventListener('input', () => { target[key] = parseFloat(inp.value); refresh(); });
+    lab.addEventListener('dblclick', () => { target[key] = defaults[key]; refresh(); });
+    rows[key] = refresh; labelEls[key] = lab; rowEls[key] = row; refresh(); host.appendChild(row);
   }
 }
-document.getElementById('resetParams').onclick = () => { Object.assign(params, DEFAULTS); Object.values(rows).forEach(f => f()); };
+const host = document.getElementById('paramHost');
+for (const [title, list] of GROUPS) buildSliders(host, title, list, params, DEFAULTS);
+
+// Signaling constants of Eqns 4-5 and the Poisson clock (paper defaults mu=50, tau=5, lambda=kappa=1).
+const SIG_DEFAULTS = { lambda: 1, kappa: 1, mu: 50, tau: 5 };
+const sig = { ...SIG_DEFAULTS };                    // passed to the network by reference, so sliders act live
+buildSliders(document.getElementById('sigHost'), '', [
+  ['lambda', 'λ', 0.1, 60, 0.1], ['kappa', 'κ', 0.1, 60, 0.1], ['mu', 'μ', 5, 200, 1], ['tau', 'τ', 1, 20, 1]], sig, SIG_DEFAULTS);
+document.getElementById('resetParams').onclick = () => {
+  Object.assign(params, DEFAULTS); Object.assign(sig, SIG_DEFAULTS); Object.values(rows).forEach(f => f());
+};
 
 // ---------- simulation state ----------
 const dtIn = document.getElementById('dt'), spfIn = document.getElementById('spf');
@@ -133,65 +190,223 @@ const fmtDt = () => document.getElementById('dtOut').textContent = (+dtIn.value)
 const fmtSpf = () => document.getElementById('spfOut').textContent = spfIn.value + '/frame';
 dtIn.oninput = () => { fmtDt(); }; spfIn.oninput = fmtSpf; fmtDt(); fmtSpf();
 
-const PRESETS = { mid: [22, 1.03, 0], G: [52.7, 0.22, 34.5], P: [13.4, 2.03, 11.8], zero: [0, 0, 0] };
-const y = [22, 1.03, 0];
-let t = 0, running = true;
+const PRESETS = { mid: [20, 1, 20], G: [52.7, 0.22, 34.5], P: [13.4, 2.03, 11.8], zero: [0, 0, 0] };   // "mid" = the paper's initial state
+let running = true;
 
-// Time history of the A value a cell is receiving. One history per cell, so a future
-// multi-cell version just creates more of these and calls drawATrace once per cell.
-const HIST_MAX = 6000, TRACE_WINDOW = 20000;   // samples kept; time units shown
+// ---- topology choice ----
+const T = Network.Topology;
+const TOPOS = [   // [value, label, builder, takes a cell count N?]
+  ['single', 'Single cell (constant A, B, C)', () => T.single(), false],
+  ['chain', 'Chain 1→2→…→N', n => T.chain(n), true],
+  ['loop', 'Loop of N cells', n => T.loop(n), true],
+  ['bichain', 'Bidirectional chain of N', n => T.bidirectionalChain(n), true],
+  ['full', 'Fully connected, N cells', n => T.fullyConnected(n), true],
+  ['f3c', 'Two cells, dissensus (Fig. 3C)', () => T.dissensusChain2(), false],
+  ['f3d', 'Two-cell loop, one dissensus (Fig. 3D)', () => T.loop2Dissensus(), false],
+  ['f3e', 'Feed-forward motif (Fig. 3E)', () => T.feedForward3(), false],
+  ['f3f', 'Incoherent feed-forward (Fig. 3F)', () => T.incoherentFeedForward3(), false],
+  ['f3g', 'Three-cell loop, two dissensus (Fig. 3G)', () => T.loop3TwoDissensus(), false],
+  ['s3', 'Three-cell loop, one inverse (Fig. S3)', () => T.loop3OneInverse(), false],
+  ['custom', 'Custom edge list…', null, false],
+];
+const topoSel = document.getElementById('topo'), nIn = document.getElementById('nCells'), edgeErr = document.getElementById('edgeErr');
+for (const [v, label] of TOPOS) topoSel.add(new Option(label, v));
+const fmtN = () => document.getElementById('nOut').textContent = nIn.value;
+nIn.oninput = () => { fmtN(); rebuild(); }; fmtN();
+
+let net = null, topo = null, sel = 0;
+let aHists = [], lastA = [], flash = [], glow = [], glowSign = [];
+const isSingle = () => topo.n === 1 && topo.edges.length === 0;
+
+function makeTopology() {
+  const entry = TOPOS.find(e => e[0] === topoSel.value);
+  if (entry[0] === 'custom') {
+    try { const tp = Network.customTopology(document.getElementById('edgeText').value); edgeErr.textContent = ''; return tp; }
+    catch (e) { edgeErr.textContent = e.message; return null; }
+  }
+  edgeErr.textContent = ''; return entry[2](+nIn.value);
+}
+
+// Time history of the A value each cell receives (one per cell); only changes are stored.
+const TRACE_WINDOW = 20000;                       // time units shown
+let HIST_MAX = 6000;
 function makeHistory() { return { t: new Float64Array(HIST_MAX), v: new Float32Array(HIST_MAX), n: 0, head: 0 }; }
 function pushHistory(hst, time, value) {
   hst.t[hst.head] = time; hst.v[hst.head] = value;
   hst.head = (hst.head + 1) % HIST_MAX; hst.n = Math.min(hst.n + 1, HIST_MAX);
 }
-const aHist = makeHistory();
+function recordA(k, time, a) { if (a !== lastA[k]) { lastA[k] = a; pushHistory(aHists[k], time, a); } }
 
 // Cell color is driven by G, blended between the two stable G levels found with the
 // Table S1 parameters (low-G/PU.1-high ~13.4, high-G ~52.7). The range is fixed: if you move
 // parameters so the attractors shift, G is simply clamped to this range.
-const G_LOW = 13.4, G_HIGH = 52.7;
+const G_LOW = 13.4, G_HIGH = 52.7, G_MID = (G_LOW + G_HIGH) / 2;
 const GRAY = [217, 217, 217], ORANGE = [240, 138, 28];
+const STAGE_BG = '#cfe8f7';          // plain light blue; keep in sync with .stage in the CSS
 function cellColor(G) {
   const s = Math.min(1, Math.max(0, (G - G_LOW) / (G_HIGH - G_LOW)));
   return GRAY.map((g, k) => Math.round(g + s * (ORANGE[k] - g)));
 }
 
+// ---------- presentation view ----------
+// The few controls used in the talk are MOVED (not copied) between the sidebar and the lower-right box,
+// so there is only one set of sliders and both views always agree.
+const ctlBody = document.getElementById('ctlBody');
+const movable = {};            // name -> { node, marker } ; marker = empty comment node marking the node's home in the sidebar
+for (const [name, node] of [['topo', document.getElementById('topoField')], ['n', document.getElementById('nRow')], ['custom', document.getElementById('customBox')],
+                            ['A', rowEls.A], ['B', rowEls.B], ['lambda', rowEls.lambda]]) {
+  const marker = document.createComment(name); node.parentNode.insertBefore(marker, node); movable[name] = { node, marker };
+}
+const viewBtns = [document.getElementById('viewBtnFull'), document.getElementById('viewBtnBox')];
+const isPresenting = () => document.body.classList.contains('presenting');
+function placeControls() {
+  const single = topo ? isSingle() : true;
+  const want = !isPresenting() ? [] : (single ? ['topo', 'A', 'B'] : ['topo', 'n', 'custom', 'A', 'lambda']);
+  for (const [name, m] of Object.entries(movable)) {
+    if (!want.includes(name) && m.node.parentNode === ctlBody) m.marker.parentNode.insertBefore(m.node, m.marker.nextSibling);   // send home
+  }
+  // Put the wanted rows in order, but never re-attach one that is already in place: re-attaching the
+  // slider being dragged (rebuild() runs on every N tick) makes the browser drop the mouse drag.
+  want.forEach((name, i) => { const node = movable[name].node; if (ctlBody.children[i] !== node) ctlBody.insertBefore(node, ctlBody.children[i] || null); });
+}
+function setPresenting(on) {
+  if (rec.on || rec.enc) return;                  // the canvas size would change mid-video
+  document.body.classList.toggle('presenting', on);
+  try { localStorage.setItem('view', on ? 'presenting' : 'full'); } catch (e) { /* storage unavailable: fine */ }
+  placeControls(); drawCell();
+}
+viewBtns.forEach(b => b.onclick = () => setPresenting(!isPresenting()));
+window.addEventListener('keydown', e => {
+  const t = e.target, typing = t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.tagName === 'INPUT' && (t.type === 'text' || t.type === 'number'));
+  if ((e.key === 'f' || e.key === 'F') && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) setPresenting(!isPresenting());
+});
+
+// (Re)build the network for the chosen topology. The topology is data; the engine (network.js)
+// does not care how many cells or which arrows there are.
+function rebuild(keepSeed) {
+  const tp = makeTopology(); if (!tp) return;           // bad custom text: keep the old network
+  topo = tp;
+  const single = isSingle();
+  document.getElementById('nRow').hidden = !TOPOS.find(e => e[0] === topoSel.value)[3];
+  document.getElementById('customBox').hidden = topoSel.value !== 'custom';
+  document.getElementById('sigBox').hidden = single;
+  labelEls.A.textContent = single ? 'A' : 'A₀';
+  HIST_MAX = topo.n > 20 ? 3000 : 12000;
+  const seed = Math.max(0, Math.floor(+document.getElementById('seed').value || 0));
+  net = Network.createNetwork(topo, params, { signal: sig, seed });
+  net.onA = (k, time, a) => recordA(k, time, a);        // exact times of pulse starts/ends for the A trace
+  sel = 0; resetState(); placeControls();
+}
 function resetState() {
   const p = PRESETS[document.getElementById('preset').value];
-  y[0] = p[0]; y[1] = p[1]; y[2] = p[2]; t = 0;
-  aHist.n = 0; aHist.head = 0; pushHistory(aHist, t, params.A);
+  const seed = Math.max(0, Math.floor(+document.getElementById('seed').value || 0));
+  net.reset(p, seed);
+  aHists = topo.n ? Array.from({ length: topo.n }, makeHistory) : []; lastA = new Array(topo.n).fill(NaN);
+  flash = new Array(topo.edges.length).fill(0); glow = new Array(topo.n).fill(0); glowSign = new Array(topo.n).fill(1);
+  net.A.forEach((a, k) => recordA(k, 0, a));
 }
+topoSel.onchange = () => rebuild();
+document.getElementById('applyEdges').onclick = () => rebuild();
+document.getElementById('seed').onchange = () => resetState();
+document.getElementById('newSeed').onclick = () => { document.getElementById('seed').value = Math.floor(Math.random() * 1e6); resetState(); };
 document.getElementById('reset').onclick = resetState;
 document.getElementById('preset').onchange = resetState;
 const playBtn = document.getElementById('play');
 playBtn.onclick = () => { running = !running; playBtn.textContent = running ? 'Pause' : 'Play'; };
 
 function advance(nSteps) {
-  const h = parseFloat(dtIn.value);
-  for (let i = 0; i < nSteps; i++) {
-    rk4Step(y, h, params);          // <- the hand-written Runge-Kutta step
-    t += h;
-  }
-  if (!isFinite(y[0] + y[1] + y[2])) { running = false; playBtn.textContent = 'Play'; resetState(); }
+  net.advanceSteps(nSteps, parseFloat(dtIn.value));      // <- hand-written Runge-Kutta steps, split at signal events
+  for (const e of net.drainEvents()) { flash[e.edge] = 1; const r = topo.edges[e.edge].to; glow[r] = 1; glowSign[r] = e.factor >= 1 ? 1 : -1; }
+  if (!net.y.every(s => isFinite(s[0] + s[1] + s[2]))) { running = false; playBtn.textContent = 'Play'; resetState(); }
 }
 
 const cellCv = document.getElementById('cell');
+let cellPos = [], cellRad = 0;                    // pixel positions from the last draw, for clicking
+cellCv.addEventListener('pointerdown', e => {
+  const r = cellCv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  for (let k = 0; k < cellPos.length; k++) if (Math.hypot(mx - cellPos[k].x, my - cellPos[k].y) <= cellRad + 4) { sel = k; return; }
+});
+
+function fillCell(c, x, y, rad, G) {
+  const [R, Gc, B] = cellColor(G);
+  c.beginPath(); c.arc(x, y, rad, 0, Math.PI * 2);
+  c.fillStyle = `rgb(${R},${Gc},${B})`; c.fill();
+  c.lineWidth = Math.max(3, rad * 0.03);
+  c.strokeStyle = `rgb(${Math.round(R * 0.7)},${Math.round(Gc * 0.7)},${Math.round(B * 0.7)})`; c.stroke();
+}
+
+// Map the topology's unit-square layout into the free part of the canvas (right of the inset,
+// below the A trace), keeping its shape.
+function networkBox(W, H) {
+  // In presentation view keep clear of the control box (lower right) and the button strip (bottom centre).
+  return isPresenting() ? { x0: 330, y0: 175, x1: W - 276, y1: H - 64 } : { x0: 330, y0: 175, x1: W - 16, y1: H - 16 };
+}
+function layoutPixels(W, H) {
+  const box = networkBox(W, H), L = topo.layout, n = L.length;
+  const xs = L.map(p => p.x), ys = L.map(p => p.y);
+  const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
+  const rw = box.x1 - box.x0, rh = box.y1 - box.y0;
+  let dmin = Infinity; for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) dmin = Math.min(dmin, Math.hypot(L[i].x - L[j].x, L[i].y - L[j].y));
+  let sc = Math.min(bw > 0 ? rw * 0.86 / bw : Infinity, bh > 0 ? rh * 0.86 / bh : Infinity);
+  if (isFinite(dmin)) sc = Math.min(sc, 0.4 * Math.min(rw, rh) / dmin);
+  const cx = (Math.max(...xs) + Math.min(...xs)) / 2, cy = (Math.max(...ys) + Math.min(...ys)) / 2;
+  const pos = L.map(p => ({ x: (box.x0 + box.x1) / 2 + (p.x - cx) * sc, y: (box.y0 + box.y1) / 2 + (p.y - cy) * sc }));
+  const rad = Math.min(0.3 * (isFinite(dmin) ? dmin * sc : 1e9), 0.2 * Math.min(rw, rh));
+  return { pos, rad };
+}
+
+const EDGE_COL = '#52606d', CONS_COL = '#0f766e', DISS_COL = '#7c3aed';
+function drawEdges(c, pos, rad) {
+  const E = topo.edges, pair = new Set(E.map(e => e.from + ',' + e.to));
+  E.forEach((e, i) => {
+    const a = pos[e.from], b = pos[e.to], dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L;
+    const off = pair.has(e.to + ',' + e.from) ? Math.min(7, rad * 0.5) : 0, nx = -uy * off, ny = ux * off;
+    const sx = a.x + ux * (rad + 3) + nx, sy = a.y + uy * (rad + 3) + ny, ex = b.x - ux * (rad + 4) + nx, ey = b.y - uy * (rad + 4) + ny;
+    if (L < 2 * rad + 10) return;
+    const f = flash[i], hot = e.type === 'consensus' ? CONS_COL : DISS_COL;
+    c.strokeStyle = f > 0.05 ? hot : EDGE_COL; c.fillStyle = c.strokeStyle; c.globalAlpha = 0.55 + 0.45 * f; c.lineWidth = 2 + 2.5 * f;
+    c.beginPath(); c.moveTo(sx, sy); c.lineTo(ex, ey); c.stroke();
+    const hl = Math.min(13, Math.max(6, rad * 0.6)), px = -uy, py = ux;
+    if (e.type === 'consensus') {                    // regular arrowhead = consensus signal
+      c.beginPath(); c.moveTo(ex, ey); c.lineTo(ex - ux * hl + px * hl * 0.5, ey - uy * hl + py * hl * 0.5); c.lineTo(ex - ux * hl - px * hl * 0.5, ey - uy * hl - py * hl * 0.5); c.closePath(); c.fill();
+    } else {                                         // flat bar = dissensus signal
+      c.lineWidth = 3 + 2 * f; c.beginPath(); c.moveTo(ex + px * hl * 0.7, ey + py * hl * 0.7); c.lineTo(ex - px * hl * 0.7, ey - py * hl * 0.7); c.stroke();
+    }
+    c.globalAlpha = 1;
+  });
+}
+
 function drawCell() {
   const r = cellCv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
   const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
   if (cellCv.width !== w || cellCv.height !== h) { cellCv.width = w; cellCv.height = h; }
   const c = cellCv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  c.clearRect(0, 0, r.width, r.height);
-  const [R, G, B] = cellColor(y[0]);
-  const rad = 0.28 * Math.min(r.width, r.height);
-  c.beginPath(); c.arc(r.width / 2, r.height / 2, rad, 0, Math.PI * 2);
-  c.fillStyle = `rgb(${R},${G},${B})`; c.fill();
-  c.lineWidth = Math.max(3, rad * 0.03);
-  c.strokeStyle = `rgb(${Math.round(R * 0.7)},${Math.round(G * 0.7)},${Math.round(B * 0.7)})`; c.stroke();
+  // Paint the background on the canvas itself (not only via CSS) so recordings of the canvas include it.
+  c.fillStyle = STAGE_BG; c.fillRect(0, 0, r.width, r.height);
+  if (isSingle()) {                                // exactly the original single-cell picture
+    const rad = 0.28 * Math.min(r.width, r.height);
+    fillCell(c, r.width / 2, r.height / 2, rad, net.y[0][0]);
+    cellPos = [{ x: r.width / 2, y: r.height / 2 }]; cellRad = rad;
+  } else {
+    const { pos, rad } = layoutPixels(r.width, r.height);
+    cellPos = pos; cellRad = rad;
+    drawEdges(c, pos, rad);
+    pos.forEach((p, k) => {
+      if (glow[k] > 0.03) {                        // ring while a signal was just received: warm = A raised, slate = A lowered
+        c.beginPath(); c.arc(p.x, p.y, rad + 5, 0, Math.PI * 2); c.lineWidth = 4; c.globalAlpha = glow[k];
+        c.strokeStyle = glowSign[k] > 0 ? '#d97706' : '#334155'; c.stroke(); c.globalAlpha = 1;
+      }
+      fillCell(c, p.x, p.y, rad, net.y[k][0]);
+      c.fillStyle = '#1c1917'; c.font = `600 ${Math.max(9, Math.round(rad * 0.8))}px system-ui, sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(String(k + 1), p.x, p.y + 1);
+      if (k === sel) { c.beginPath(); c.arc(p.x, p.y, rad + 9, 0, Math.PI * 2); c.lineWidth = 2; c.strokeStyle = '#1c1917'; c.setLineDash([4, 3]); c.stroke(); c.setLineDash([]); }
+    });
+    for (let i = 0; i < flash.length; i++) flash[i] *= 0.93;
+    for (let k = 0; k < glow.length; k++) glow[k] *= 0.93;
+  }
   drawInset(c);
   drawLegend(c, r.width, r.height);
-  drawATrace(c, r.width - 14 - 300, 14, 300, 150, aHist, 'Cell 1 · A over time');
+  drawATrace(c, r.width - 14 - 300, 14, 300, 150);
 }
 
 
@@ -237,19 +452,21 @@ function drawPanel(c, x, y, w, h, key, color, label, logY, labelBottom) {
   c.setLineDash([]);
   // vertical line at the current A, and the cell's current state on it
   c.strokeStyle = '#1c1917'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(sx(params.A), y); c.lineTo(sx(params.A), y + h); c.stroke();
-  c.fillStyle = '#fff'; c.strokeStyle = '#1c1917'; c.lineWidth = 2;
-  c.beginPath(); c.arc(sx(params.A), sy(y_state(key)), 4, 0, 7); c.fill(); c.stroke();
+  for (let k = net.y.length - 1; k >= 0; k--) {              // one dot per cell, filled with that cell's color
+    const [R, Gc, B] = cellColor(net.y[k][0]);
+    c.fillStyle = net.y.length === 1 ? '#fff' : `rgb(${R},${Gc},${B})`; c.strokeStyle = '#1c1917'; c.lineWidth = k === sel ? 2.4 : 1.4;
+    c.beginPath(); c.arc(sx(params.A), sy(key === 'G' ? net.y[k][0] : net.y[k][1]), k === sel ? 4.5 : 3.5, 0, 7); c.fill(); c.stroke();
+  }
   c.restore();
   c.fillStyle = color; c.font = '600 12px system-ui, sans-serif'; c.textAlign = 'right'; c.textBaseline = labelBottom ? 'bottom' : 'top';
   c.fillText(label, x + w - 6, labelBottom ? y + h - 4 : y + 4);   // right side: both curves leave it empty
 }
-const y_state = key => key === 'G' ? y[0] : y[1];
 function drawInset(c) {
   updateCurve();
   const X0 = 14, Y0 = 14, W = 300, H = 290;
   c.fillStyle = 'rgba(255,255,255,0.82)'; c.beginPath(); c.roundRect(X0, Y0, W, H, 8); c.fill();
   c.fillStyle = '#1c1917'; c.font = '600 12px system-ui, sans-serif'; c.textAlign = 'left'; c.textBaseline = 'top';
-  c.fillText('Steady states vs A', X0 + 10, Y0 + 8);
+  c.fillText(isSingle() ? 'Steady states vs A' : 'Steady states vs resting A₀ (dots = cells)', X0 + 10, Y0 + 8);
   const px = X0 + 40, pw = W - 56, ph = 96;
   drawPanel(c, px, Y0 + 30, pw, ph, 'G', '#b8620a', 'G (log)', true, true);
   drawPanel(c, px, Y0 + 30 + ph + 22, pw, ph, 'P', '#55616b', 'P (log)', true);
@@ -257,13 +474,14 @@ function drawInset(c) {
   const ay = Y0 + 30 + 2 * ph + 22;
   c.fillStyle = '#5c666e'; c.font = '10.5px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'top';
   for (let a = 0; a <= A_MAX + 1e-9; a += 0.5) c.fillText(a.toFixed(1), px + a / A_MAX * pw, ay + 3);
-  c.fillText('A = ' + params.A.toFixed(3) + '   (solid = stable, dashed = unstable)', px + pw / 2, ay + 17);
+  c.fillText((isSingle() ? 'A = ' : 'A₀ = ') + params.A.toFixed(3) + '   (solid = stable, dashed = unstable)', px + pw / 2, ay + 17);
 }
 
 // ---------- legend: the two cell fates, colored exactly as the cell is at each stable level ----------
 function drawLegend(c, W, H) {
   const items = [['High G (MEP)', G_HIGH], ['High P (GMP)', G_LOW]];
-  const rad = 11, pad = 10, rowH = 30, bw = 158, bh = pad * 2 + rowH * items.length - (rowH - 2 * rad);
+  const rad = 11, pad = 10, rowH = 30, bw = 158, extra = isSingle() ? 0 : 56;      // network mode adds the two arrow keys
+  const bh = pad * 2 + rowH * items.length - (rowH - 2 * rad) + extra;
   const x0 = 14, y0 = H - 14 - bh;
   c.fillStyle = 'rgba(255,255,255,0.82)'; c.beginPath(); c.roundRect(x0, y0, bw, bh, 8); c.fill();
   items.forEach(([label, g], i) => {
@@ -274,51 +492,170 @@ function drawLegend(c, W, H) {
     c.fillStyle = '#1c1917'; c.font = '600 13px system-ui, sans-serif'; c.textAlign = 'left'; c.textBaseline = 'middle';
     c.fillText(label, cx + rad + 9, cy);
   });
+  if (extra) {
+    const ky = y0 + bh - pad - 36;
+    c.font = '600 12px system-ui, sans-serif'; c.textBaseline = 'middle'; c.textAlign = 'left'; c.lineWidth = 2.5;
+    c.strokeStyle = CONS_COL; c.fillStyle = CONS_COL; c.beginPath(); c.moveTo(x0 + pad, ky); c.lineTo(x0 + pad + 30, ky); c.stroke();
+    c.beginPath(); c.moveTo(x0 + pad + 34, ky); c.lineTo(x0 + pad + 24, ky - 5); c.lineTo(x0 + pad + 24, ky + 5); c.closePath(); c.fill();
+    c.fillStyle = '#1c1917'; c.fillText('consensus', x0 + pad + 44, ky);
+    c.strokeStyle = DISS_COL; c.beginPath(); c.moveTo(x0 + pad, ky + 22); c.lineTo(x0 + pad + 30, ky + 22); c.stroke();
+    c.lineWidth = 3.5; c.beginPath(); c.moveTo(x0 + pad + 31, ky + 15); c.lineTo(x0 + pad + 31, ky + 29); c.stroke();
+    c.fillStyle = '#1c1917'; c.fillText('dissensus', x0 + pad + 44, ky + 22);
+  }
 }
 
-// ---------- live trace of A for one cell ----------
-function drawATrace(c, x, y, w, h, hst, title) {
-  const pl = 40, pr = 22, pt = 30, pb = 22;
-  c.fillStyle = 'rgba(255,255,255,0.82)'; c.beginPath(); c.roundRect(x, y, w, h, 8); c.fill();
-  c.fillStyle = '#1c1917'; c.font = '600 12px system-ui, sans-serif'; c.textAlign = 'left'; c.textBaseline = 'top';
-  c.fillText(title, x + 10, y + 8);
-  c.textAlign = 'right'; c.fillText('A = ' + params.A.toFixed(3), x + w - 10, y + 8);
-  const gx = x + pl, gy = y + pt, gw = w - pl - pr, gh = h - pt - pb;
-  const x1 = Math.max(t, TRACE_WINDOW), x0 = x1 - TRACE_WINDOW;
-  const sx = tt => gx + (tt - x0) / (x1 - x0) * gw, sy = a => gy + gh - a / A_MAX * gh;
-  c.strokeStyle = '#d5dde3'; c.lineWidth = 1; c.fillStyle = '#5c666e'; c.font = '10.5px system-ui, sans-serif';
-  c.textAlign = 'right'; c.textBaseline = 'middle';
-  for (const a of [0, 1, 2]) { c.beginPath(); c.moveTo(gx, sy(a)); c.lineTo(gx + gw, sy(a)); c.stroke(); c.fillText(a.toFixed(1), gx - 4, sy(a)); }
-  c.strokeRect(gx, gy, gw, gh);
-  c.textAlign = 'center'; c.textBaseline = 'top';
-  for (const f of [0, 0.5, 1]) c.fillText(Math.round(x0 + f * (x1 - x0)).toLocaleString(), gx + f * gw, gy + gh + 4);
-  // step trace (A holds its value until changed), extended to "now" with the current slider value
-  c.save(); c.beginPath(); c.rect(gx, gy - 2, gw, gh + 4); c.clip();
-  c.strokeStyle = '#1c1917'; c.lineWidth = 2; c.lineJoin = 'round'; c.beginPath();
+// ---------- live trace of A: the selected cell in bold, the others faint ----------
+function traceSeries(c, hst, curA, now, sx, sy, x0) {
   let started = false, prev = null;
+  c.beginPath();
   for (let k = 0; k < hst.n; k++) {
     const i = (hst.head - hst.n + k + HIST_MAX) % HIST_MAX;
     if (hst.t[i] < x0) { prev = hst.v[i]; continue; }
     if (!started) { if (prev === null) prev = hst.v[i]; c.moveTo(sx(x0), sy(prev)); started = true; }
     c.lineTo(sx(hst.t[i]), sy(prev)); c.lineTo(sx(hst.t[i]), sy(hst.v[i])); prev = hst.v[i];
   }
-  if (!started) { prev = params.A; c.moveTo(sx(x0), sy(prev)); }
-  c.lineTo(sx(t), sy(prev)); c.lineTo(sx(t), sy(params.A));
-  c.stroke(); c.restore();
+  if (!started) { prev = curA; c.moveTo(sx(x0), sy(prev)); }
+  c.lineTo(sx(now), sy(prev)); c.lineTo(sx(now), sy(curA));
+  c.stroke();
+}
+function drawATrace(c, x, y, w, h) {
+  const pl = 40, pr = 22, pt = 30, pb = 22, now = net.t, k0 = Math.min(sel, topo.n - 1);
+  const single = isSingle(), curA = net.A[k0];
+  c.fillStyle = 'rgba(255,255,255,0.82)'; c.beginPath(); c.roundRect(x, y, w, h, 8); c.fill();
+  c.fillStyle = '#1c1917'; c.font = '600 12px system-ui, sans-serif'; c.textAlign = 'left'; c.textBaseline = 'top';
+  c.fillText(single ? `Cell ${k0 + 1} · A over time` : `Cell ${k0 + 1} · A over time (log)`, x + 10, y + 8);
+  c.textAlign = 'right'; c.fillText('A = ' + curA.toFixed(3), x + w - 10, y + 8);
+  const gx = x + pl, gy = y + pt, gw = w - pl - pr, gh = h - pt - pb;
+  const x1 = Math.max(now, TRACE_WINDOW), x0 = x1 - TRACE_WINDOW;
+  const sx = tt => gx + (tt - x0) / (x1 - x0) * gw;
+  // y axis. Single cell: linear 0-2 (the A slider's range), as before. Network mode: signals MULTIPLY A
+  // (by factors from ~0.02 to ~50), so use a log axis that always includes 1 decade either side of A0.
+  const shown = single ? [k0] : (topo.n <= 12 ? aHists.map((_, k) => k) : [k0]);     // cells drawn on this plot
+  let sy, ticks;
+  if (single) {
+    let amax = Math.max(2, params.A, curA);
+    const hs0 = aHists[k0];
+    for (let k = 0; k < hs0.n; k++) { const i = (hs0.head - hs0.n + k + HIST_MAX) % HIST_MAX; if (hs0.t[i] >= x0 && hs0.v[i] > amax) amax = hs0.v[i]; }
+    const ymax = amax <= 2 ? 2 : niceCeil(amax * 1.04);
+    sy = a => gy + gh - Math.min(a, ymax) / ymax * gh; ticks = [0, ymax / 2, ymax];
+  } else {
+    let vmin = Math.min(params.A, 1), vmax = Math.max(params.A, 1);
+    for (const kk of shown) { const hh = aHists[kk]; vmin = Math.min(vmin, net.A[kk]); vmax = Math.max(vmax, net.A[kk]);
+      for (let k = 0; k < hh.n; k++) { const i = (hh.head - hh.n + k + HIST_MAX) % HIST_MAX; if (hh.t[i] >= x0) { vmin = Math.min(vmin, hh.v[i]); vmax = Math.max(vmax, hh.v[i]); } } }
+    const e0 = Math.min(-1, Math.floor(Math.log10(Math.max(vmin, 1e-9)))), e1 = Math.max(1, Math.ceil(Math.log10(vmax)));
+    sy = a => gy + gh - (Math.log10(Math.max(a, 1e-9)) - e0) / (e1 - e0) * gh;
+    ticks = []; for (let e = e0; e <= e1; e++) ticks.push(Math.pow(10, e));
+  }
+  const hs = aHists[k0];
+  c.strokeStyle = '#d5dde3'; c.lineWidth = 1; c.fillStyle = '#5c666e'; c.font = '10.5px system-ui, sans-serif';
+  c.textAlign = 'right'; c.textBaseline = 'middle';
+  for (const a of ticks) { const yy = a > 0 ? sy(a) : gy + gh; c.beginPath(); c.moveTo(gx, yy); c.lineTo(gx + gw, yy); c.stroke(); c.fillText(+a.toPrecision(3), gx - 4, yy); }
+  c.strokeRect(gx, gy, gw, gh);
+  c.textAlign = 'center'; c.textBaseline = 'top';
+  for (const f of [0, 0.5, 1]) c.fillText(Math.round(x0 + f * (x1 - x0)).toLocaleString(), gx + f * gw, gy + gh + 4);
+  c.save(); c.beginPath(); c.rect(gx, gy - 2, gw, gh + 4); c.clip(); c.lineJoin = 'round';
+  if (!single) {                                    // resting level A0, then the other cells (faint), then the selected cell
+    c.setLineDash([3, 3]); c.strokeStyle = '#8a949c'; c.lineWidth = 1; c.beginPath(); c.moveTo(gx, sy(params.A)); c.lineTo(gx + gw, sy(params.A)); c.stroke(); c.setLineDash([]);
+    for (const k of shown) if (k !== k0) { c.strokeStyle = 'rgba(28,25,23,0.22)'; c.lineWidth = 1; traceSeries(c, aHists[k], net.A[k], now, sx, sy, x0); }
+  }
+  c.strokeStyle = '#1c1917'; c.lineWidth = 2; traceSeries(c, hs, curA, now, sx, sy, x0);
+  c.restore();
   c.fillStyle = '#fff'; c.strokeStyle = '#1c1917'; c.lineWidth = 2;
-  c.beginPath(); c.arc(Math.min(sx(t), gx + gw), sy(params.A), 4, 0, 7); c.fill(); c.stroke();
+  c.beginPath(); c.arc(Math.min(sx(now), gx + gw), sy(curA), 4, 0, 7); c.fill(); c.stroke();
 }
 
+// ---------- recording: MP4 (H.264) ----------
+// The browser's WebCodecs VideoEncoder compresses each frame; mp4mux.js packs the compressed
+// frames into an .mp4 file. Frames are recorded one-per-simulation-frame, so the file does not
+// depend on how fast this computer happens to render. The video's frames-per-second is set equal
+// to the Speed slider (RK4 steps per animation frame), read once when recording starts and fixed
+// for that file, and capped at REC_FPS_MAX (H.264 players/levels do not handle the slider's full
+// 600 range). Change Speed before pressing Record, not during.
+const REC_FPS_MAX = 120;
+const rec = { fps: 30, on: false, enc: null, off: null, offCtx: null, w: 0, h: 0, n: 0, samples: [], avcC: null, error: null };
+const recBtn = document.getElementById('rec'), recInfo = document.getElementById('recInfo');
+const recSupported = 'VideoEncoder' in window && 'VideoFrame' in window;
+if (!recSupported) { recBtn.disabled = true; recBtn.title = 'Recording needs a browser with WebCodecs (Chrome, Edge, or Safari 16.4+).'; }
+
+const evenFloor = v => Math.max(2, Math.floor(v / 2) * 2);
+async function startRecording() {
+  rec.fps = Math.min(REC_FPS_MAX, Math.max(1, parseInt(spfIn.value, 10)));   // video fps = Speed
+  // Fixed, even frame size (H.264 needs even dimensions), at most 1920x1200 so any encoder accepts it.
+  const r = cellCv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;    // same size drawCell() uses
+  const pw = Math.round(r.width * dpr), ph = Math.round(r.height * dpr);
+  const k = Math.min(1, 1920 / pw, 1200 / ph);
+  rec.w = evenFloor(pw * k); rec.h = evenFloor(ph * k);
+  let cfg = null;
+  for (const codec of ['avc1.64002a', 'avc1.640033', 'avc1.4d002a', 'avc1.42002a']) {     // High/Main/Baseline, level 4.2-5.1
+    const c = { codec, width: rec.w, height: rec.h, bitrate: 8e6, framerate: rec.fps, avc: { format: 'avc' } };
+    try { if ((await VideoEncoder.isConfigSupported(c)).supported) { cfg = c; break; } } catch (e) { /* try next */ }
+  }
+  if (!cfg) { recInfo.textContent = 'This browser cannot encode H.264 video.'; return; }
+  rec.samples = []; rec.avcC = null; rec.error = null; rec.n = 0;
+  rec.enc = new VideoEncoder({
+    output: (chunk, meta) => {
+      if (meta && meta.decoderConfig && meta.decoderConfig.description && !rec.avcC) {
+        const d = meta.decoderConfig.description;      // the avcC record (SPS/PPS) the .mp4 needs
+        rec.avcC = d instanceof ArrayBuffer ? new Uint8Array(d.slice(0)) : new Uint8Array(d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength));
+      }
+      const data = new Uint8Array(chunk.byteLength); chunk.copyTo(data);
+      rec.samples.push({ data, key: chunk.type === 'key' });
+    },
+    error: e => { rec.error = e; rec.on = false; recBtn.textContent = '● Record'; recBtn.classList.remove('on'); recInfo.textContent = 'Recording failed: ' + e.message; },
+  });
+  rec.enc.configure(cfg);
+  rec.off = document.createElement('canvas'); rec.off.width = rec.w; rec.off.height = rec.h; rec.offCtx = rec.off.getContext('2d');
+  rec.on = true; recBtn.textContent = '■ Stop & save'; recBtn.classList.add('on');
+}
+function captureFrame() {            // call right after drawCell(), once per simulated frame
+  if (!rec.on) return;
+  rec.offCtx.drawImage(cellCv, 0, 0, rec.w, rec.h);
+  const us = 1e6 / rec.fps, vf = new VideoFrame(rec.off, { timestamp: Math.round(rec.n * us), duration: Math.round(us) });
+  rec.enc.encode(vf, { keyFrame: rec.n % (2 * rec.fps) === 0 });
+  vf.close(); rec.n++;
+}
+async function stopRecording() {
+  rec.on = false; recBtn.disabled = true; recBtn.textContent = 'Saving…';
+  try {
+    await rec.enc.flush(); rec.enc.close();
+    if (rec.error || !rec.samples.length || !rec.avcC) throw rec.error || new Error('no frames were recorded');
+    const bytes = Mp4Mux.build({ width: rec.w, height: rec.h, fps: rec.fps, avcC: rec.avcC, samples: rec.samples });
+    const a = document.createElement('a'), d = new Date(), p = v => String(v).padStart(2, '0');
+    a.href = URL.createObjectURL(new Blob([bytes], { type: 'video/mp4' }));
+    a.download = `macLean-cell-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.mp4`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    recInfo.textContent = `Saved ${a.download} (${rec.samples.length} frames at ${rec.fps} fps, ${(rec.samples.length / rec.fps).toFixed(1)} s)`;
+    window.dispatchEvent(new CustomEvent('recording-saved', { detail: { bytes, frames: rec.samples.length, width: rec.w, height: rec.h, fps: rec.fps } }));
+  } catch (e) { recInfo.textContent = 'Recording failed: ' + e.message; }
+  rec.enc = null; recBtn.disabled = false; recBtn.textContent = '● Record'; recBtn.classList.remove('on');
+}
+recBtn.onclick = () => { if (rec.on) stopRecording(); else if (!rec.enc) startRecording(); };
+
 function frame() {
-  if (running) { advance(parseInt(spfIn.value, 10)); pushHistory(aHist, t, params.A); }
+  // If the encoder is falling behind, wait a frame rather than drop one: every recorded video
+  // frame is exactly one simulation frame.
+  const stalled = rec.on && rec.enc.encodeQueueSize > 6;
+  const stepped = running && !stalled;
+  if (stepped) advance(parseInt(spfIn.value, 10));
+  net.refreshA();                                   // pick up a moved A slider even while paused
+  net.A.forEach((a, k) => recordA(k, net.t, a));
+  viewBtns.forEach(x => { x.disabled = !!(rec.on || rec.enc); x.title = x.disabled ? 'Not while recording' : 'Switch between presentation view and all controls (shortcut: F)'; });
   drawCell();
-  document.getElementById('tOut').textContent = Math.round(t).toLocaleString();
-  document.getElementById('gOut').textContent = y[0].toFixed(2);
-  document.getElementById('pOut').textContent = y[1].toFixed(3);
-  document.getElementById('xOut').textContent = y[2].toFixed(2);
+  if (stepped) captureFrame();
+  if (rec.on) recInfo.textContent = `● REC ${rec.fps} fps · ${rec.n} frames · ${(rec.n / rec.fps).toFixed(1)} s`;
+  const k = Math.min(sel, topo.n - 1), cy = net.y[k];
+  const highCount = net.y.filter(s => s[0] > G_MID).length;
+  document.getElementById('tOut').textContent = Math.round(net.t).toLocaleString();
+  document.getElementById('cellLbl').textContent = isSingle() ? '' : `cell ${k + 1}: `;
+  document.getElementById('gOut').textContent = cy[0].toFixed(2);
+  document.getElementById('pOut').textContent = cy[1].toFixed(3);
+  document.getElementById('xOut').textContent = cy[2].toFixed(2);
+  document.getElementById('highOut').textContent = isSingle() ? '' : ` · high G: ${highCount} of ${topo.n}`;
   requestAnimationFrame(frame);
 }
-resetState();
+{ let v = 'presenting'; try { v = localStorage.getItem('view') || v; } catch (e) { /* default */ }
+  document.body.classList.toggle('presenting', v !== 'full'); }
+rebuild();
 requestAnimationFrame(frame);
 </script>
 </body>
